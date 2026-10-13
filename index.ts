@@ -70,17 +70,25 @@ const plugin: Plugin.Plugin = {
 
     await ctx.tool.hook("execute.before", async (event) => {
       if (!opts.tools.has(event.tool)) return
-      let messages: AssistantMessage[]
-      try {
-        messages = (await ctx.session.context({ sessionID: event.sessionID })) as unknown as AssistantMessage[]
-      } catch (error) {
-        log(`context lookup failed for ${event.sessionID}, letting ${event.tool} through: ${error instanceof Error ? error.message : String(error)}`)
-        return
-      }
-      const chars = textInTurn(messages, event.messageID, event.id)
-      if (chars < 0) {
-        debug(`message ${event.messageID} not found in session context, letting ${event.tool} through`)
-        return
+      // The current step's text part streams in parallel and is often not yet persisted
+      // when this hook fires, so a first-step question would always count 0. Retry a few
+      // times before rejecting.
+      let chars = -1
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 500))
+        let messages: AssistantMessage[]
+        try {
+          messages = (await ctx.session.context({ sessionID: event.sessionID })) as unknown as AssistantMessage[]
+        } catch (error) {
+          log(`context lookup failed for ${event.sessionID}, letting ${event.tool} through: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        chars = textInTurn(messages, event.messageID, event.id)
+        if (chars < 0) {
+          debug(`message ${event.messageID} not found in session context, letting ${event.tool} through`)
+          return
+        }
+        if (chars >= opts.minChars) break
       }
       debug(`${event.tool} in ${event.messageID}: ${chars} chars of text in the turn before the call`)
       if (chars >= opts.minChars) return
