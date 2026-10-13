@@ -13,7 +13,7 @@ export type Options = {
 }
 
 type Content = { type: string; text?: string; id?: string }
-type AssistantMessage = { id: string; type: "assistant"; content: Content[] }
+type AssistantMessage = { id: string; type: string; content: Content[] }
 
 export function resolveOptions(raw: Readonly<Record<string, any>> = {}): Options {
   return {
@@ -33,10 +33,29 @@ export function textBefore(message: AssistantMessage, callID: string): number {
   return chars
 }
 
+// Visible text in the whole turn before the call: the current step's text plus every
+// assistant step since the last user message. The current step's text part is often not
+// yet persisted when execute.before fires (it streams in parallel), so counting only the
+// current message rejected calls whose description sat one step earlier in the same reply.
+export function textInTurn(messages: AssistantMessage[], messageID: string, callID: string): number {
+  const idx = messages.findIndex((m) => m.id === messageID)
+  if (idx < 0) return -1
+  let chars = textBefore(messages[idx], callID)
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.type === "user") break
+    if (m.type !== "assistant") continue
+    for (const part of m.content ?? []) {
+      if (part.type === "text") chars += (part.text ?? "").trim().length
+    }
+  }
+  return chars
+}
+
 export function rejection(tool: string, minChars: number, chars: number): string {
   return [
-    `[question-gate] \`${tool}\` rejected: this step has ${chars} visible characters of text before the call (minimum ${minChars}).`,
-    "The thinking block is not shown to the user. Before calling the tool again, write the reply text in the same step:",
+    `[question-gate] \`${tool}\` rejected: this turn has ${chars} visible characters of text before the call (minimum ${minChars}).`,
+    "The thinking block is not shown to the user. Before calling the tool again, write the reply text:",
     "a short description of what is being asked and why, what each outcome leads to, and any commands as fenced blocks.",
     "Then call the tool with the same arguments.",
   ].join(" ")
@@ -51,20 +70,19 @@ const plugin: Plugin.Plugin = {
 
     await ctx.tool.hook("execute.before", async (event) => {
       if (!opts.tools.has(event.tool)) return
-      let message: AssistantMessage | undefined
+      let messages: AssistantMessage[]
       try {
-        const messages = (await ctx.session.context({ sessionID: event.sessionID })) as unknown as AssistantMessage[]
-        message = messages.find((m) => m.type === "assistant" && m.id === event.messageID)
+        messages = (await ctx.session.context({ sessionID: event.sessionID })) as unknown as AssistantMessage[]
       } catch (error) {
         log(`context lookup failed for ${event.sessionID}, letting ${event.tool} through: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
-      if (!message) {
+      const chars = textInTurn(messages, event.messageID, event.id)
+      if (chars < 0) {
         debug(`message ${event.messageID} not found in session context, letting ${event.tool} through`)
         return
       }
-      const chars = textBefore(message, event.id)
-      debug(`${event.tool} in ${event.messageID}: ${chars} chars of text before the call (parts: ${message.content.map((p) => p.type).join(",")})`)
+      debug(`${event.tool} in ${event.messageID}: ${chars} chars of text in the turn before the call`)
       if (chars >= opts.minChars) return
       log(`rejected ${event.tool} in ${event.sessionID}/${event.messageID}: ${chars} chars < ${opts.minChars}`)
       throw new Error(rejection(event.tool, opts.minChars, chars))
