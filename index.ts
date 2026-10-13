@@ -55,9 +55,9 @@ export function textInTurn(messages: AssistantMessage[], messageID: string, call
 export function rejection(tool: string, minChars: number, chars: number): string {
   return [
     `[question-gate] \`${tool}\` rejected: this turn has ${chars} visible characters of text before the call (minimum ${minChars}).`,
-    "The thinking block is not shown to the user. Before calling the tool again, write the reply text:",
-    "a short description of what is being asked and why, what each outcome leads to, and any commands as fenced blocks.",
-    "Then call the tool with the same arguments.",
+    "Reasoning/thinking blocks are NOT visible text. Write the description as a normal reply text part:",
+    "what is being asked and why, what each outcome leads to, any commands as fenced blocks. Then call the tool again.",
+    "If you are a subagent or otherwise have no path to the user: do not retry — make the best decision yourself, continue, and record the decision in your report.",
   ].join(" ")
 }
 
