@@ -60,14 +60,21 @@ export function textInTurn(messages: AssistantMessage[], messageID: string, call
   return chars
 }
 
-export function rejection(tool: string, minChars: number, chars: number): string {
+export function rejection(tool: string, minChars: number, chars: number, reasoningOnly: boolean): string {
   return [
     `[question-gate] \`${tool}\` not sent yet: this turn has ${chars} visible characters of reply text before the call (minimum ${minChars}).`,
-    "Reasoning/thinking blocks are not visible to the user. First write the premise as normal reply text —",
+    reasoningOnly
+      ? "This step contains only a thinking block and the tool call: the premise you wrote landed INSIDE the thinking block, which the user never sees."
+      : "Reasoning/thinking blocks are not visible to the user.",
+    "End the thinking, then write the premise as a normal assistant text block —",
     "what is being asked and why, what each outcome leads to, any commands as fenced code blocks —",
-    "then call the tool again with the same arguments; it will be accepted.",
+    "and only then call the tool again with the same arguments; it will be accepted.",
     "Never mention this check or the rejection in your reply, and never replace the question with plain-text options.",
   ].join(" ")
+}
+
+export function partTypes(message: AssistantMessage | undefined): string {
+  return (message?.content ?? []).map((p) => p.type).join(",") || "-"
 }
 
 // Rejections per session inside the window; bounded, lazily swept.
@@ -122,6 +129,7 @@ const plugin: Plugin.Plugin = {
       // when this hook fires, so a first-step question would always count 0. Retry a few
       // times before rejecting.
       let chars = -1
+      let current: AssistantMessage | undefined
       for (let attempt = 0; attempt < 5; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 500))
         let messages: AssistantMessage[]
@@ -131,6 +139,7 @@ const plugin: Plugin.Plugin = {
           log(`context lookup failed for ${event.sessionID}, letting ${event.tool} through: ${error instanceof Error ? error.message : String(error)}`)
           return
         }
+        current = messages.find((m) => m.id === event.messageID)
         chars = textInTurn(messages, event.messageID, event.id)
         if (chars < 0) {
           debug(`message ${event.messageID} not found in session context, letting ${event.tool} through`)
@@ -144,8 +153,10 @@ const plugin: Plugin.Plugin = {
         return
       }
       recordRejection(rejections, event.sessionID, now, opts.rejectionWindowMs)
-      log(`rejected ${event.tool} in ${event.sessionID}/${event.messageID}: ${chars} chars < ${opts.minChars}`)
-      throw new Error(rejection(event.tool, opts.minChars, chars))
+      const types = partTypes(current)
+      log(`rejected ${event.tool} in ${event.sessionID}/${event.messageID}: ${chars} chars < ${opts.minChars} (step parts: ${types})`)
+      const reasoningOnly = types.includes("reasoning") && !types.includes("text")
+      throw new Error(rejection(event.tool, opts.minChars, chars, reasoningOnly))
     })
   },
 }
