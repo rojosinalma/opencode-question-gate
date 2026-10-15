@@ -1,0 +1,14 @@
+{
+  "name": "opencode-question-gate",
+  "version": "0.1.0",
+  "description": "OpenCode plugin: guarantees the question tool is always preceded by a visible premise",
+  "type": "module",
+  "license": "MIT",
+  "main": "index.ts",
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "latest"
+  }
+}
