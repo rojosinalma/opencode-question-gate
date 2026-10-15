@@ -39,7 +39,7 @@ type QuestionInput = { questions?: { header?: string; question?: string }[] }
 export const INJECTED_MARKER = "_(context recovered from the agent's reasoning — it asked without writing a premise)_"
 
 // Reasoning paragraphs that talk about the asking machinery itself are self-talk, never a premise.
-const META = /(question-gate|visible paragraph|a premise|the premise|the question tool|before asking|call the tool)/i
+const META = /(question-gate|visible paragraph|a premise|the premise|the question tool|before asking|call the tool|gate (should|now|check|plugin|rejection|error))/i
 // A drafted premise addresses the user.
 const ADDRESSES_USER = /\b(you|your|you're|you'd|you'll)\b/i
 
@@ -223,6 +223,7 @@ const plugin: Plugin.Plugin = {
 
     // Layer 1: prevention. State the requirement where the model decides to call the tool.
     if (opts.describeTool) {
+      const extended: string[] = []
       try {
         await ctx.tool.transform((editor) => {
           for (const id of opts.tools) {
@@ -232,8 +233,10 @@ const plugin: Plugin.Plugin = {
             editor.update(id, (t) => {
               t.description = `${t.description ?? ""}\n\n${TOOL_REQUIREMENT}`.trim()
             })
+            extended.push(id)
           }
         })
+        debug(`tool description extended for: ${extended.join(",") || "none (already carried the requirement, or tool absent)"}`)
       } catch (error) {
         log(`could not extend the tool description: ${error instanceof Error ? error.message : String(error)}`)
       }
