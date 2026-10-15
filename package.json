@@ -2,13 +2,27 @@
   "name": "opencode-question-gate",
   "version": "0.1.0",
   "description": "OpenCode plugin: guarantees the question tool is always preceded by a visible premise",
-  "type": "module",
+  "author": "rojosinalma",
   "license": "MIT",
+  "type": "module",
   "main": "index.ts",
   "scripts": {
     "test": "bun test"
   },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "ai-agents",
+    "guardrails",
+    "ux",
+    "llm"
+  ],
+  "homepage": "https://github.com/rojosinalma/opencode-question-gate",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rojosinalma/opencode-question-gate"
+  },
   "devDependencies": {
-    "@opencode/plugin": "latest"
+    "@opencode/plugin": "2.0.30"
   }
 }
