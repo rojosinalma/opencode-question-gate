@@ -222,21 +222,29 @@ const plugin: Plugin.Plugin = {
     const turns = new Map<string, TurnState>()
 
     // Layer 1: prevention. State the requirement where the model decides to call the tool.
+    // The callback is replayed on every registry rebuild, so it logs from inside (it has not run
+    // yet when `transform()` returns) and treats finding its own earlier edit as the steady state.
     if (opts.describeTool) {
-      const extended: string[] = []
       try {
         await ctx.tool.transform((editor) => {
+          const outcome: string[] = []
           for (const id of opts.tools) {
             const tool = editor.get(id)
-            if (!tool) continue
-            if (typeof tool.description === "string" && tool.description.includes("REQUIRED before calling this tool")) continue
+            if (!tool) {
+              outcome.push(`${id}=absent`)
+              continue
+            }
+            if (typeof tool.description === "string" && tool.description.includes("REQUIRED before calling this tool")) {
+              outcome.push(`${id}=already-carries-it`)
+              continue
+            }
             editor.update(id, (t) => {
               t.description = `${t.description ?? ""}\n\n${TOOL_REQUIREMENT}`.trim()
             })
-            extended.push(id)
+            outcome.push(`${id}=extended`)
           }
+          debug(`tool description: ${outcome.join(" ")}`)
         })
-        debug(`tool description extended for: ${extended.join(",") || "none (already carried the requirement, or tool absent)"}`)
       } catch (error) {
         log(`could not extend the tool description: ${error instanceof Error ? error.message : String(error)}`)
       }
