@@ -1,51 +1,110 @@
 // Type-only import: Bun resolves bare specifiers from the symlink's real path, where no node_modules exists.
 import type { Plugin } from "@opencode/plugin"
 
-// Nudges a `question` tool call to carry a visible premise: when the turn has no reply text
-// before the call, the call is rejected once or twice so the model writes the description and
-// retries. Reasoning (thinking) blocks do not count: the model habitually writes the premise
-// there, and the user then sees a bare question with no explanation.
+// Guarantees that a `question` tool call carries a visible premise, in three layers:
 //
-// The gate is a nudge, never a wall (user rule, 2026-10-13): after `maxRejections` rejections
-// in one session within `rejectionWindowMs`, the next call passes regardless, so a question is
-// never terminally blocked by its own guard.
+//   1. prevention  — the requirement is appended to the `question` tool's own description, so the
+//                    model reads it while deciding to call, not after.
+//   2. nudge       — a call with no visible reply text in the turn is rejected AT MOST ONCE PER TURN
+//                    (`max_rejections_per_turn`, 0 disables), so the model writes the premise as
+//                    reply text and retries. In practice the retry carries the text.
+//   3. guarantee   — if it still arrives bare, the call is LET THROUGH and the premise is injected
+//                    into the form from the step's reasoning tail (where thinking models reliably
+//                    draft the user-facing paragraph). The user always sees a description; the
+//                    agent never loops on an error.
+//
+// Reasoning (thinking) blocks never count as visible text: the user sees a bare question when the
+// premise lives there. Origin: 2026-10-12, questions arriving before their explanation; hardened
+// 2026-10-15 after a session took 6 rejections, one turn died on a provider content filter right
+// after a rejection, and two questions were dismissed after being asked twice.
 
 export type Options = {
   tools: Set<string>
   minChars: number
-  maxRejections: number
-  rejectionWindowMs: number
+  maxRejectionsPerTurn: number
+  turnWindowMs: number
+  premiseMaxChars: number
+  premiseMinChars: number
+  injectPremise: boolean
+  describeTool: boolean
+  contextRetries: number
+  contextRetryMs: number
   debug: boolean
 }
 
 type Content = { type: string; text?: string; id?: string }
-type AssistantMessage = { id: string; type: string; content: Content[] }
+type Message = { id: string; type: string; content?: Content[] }
+type QuestionInput = { questions?: { header?: string; question?: string }[] }
+
+export const INJECTED_MARKER = "_(context recovered from the agent's reasoning — it asked without writing a premise)_"
+
+// Reasoning paragraphs that talk about the asking machinery itself are self-talk, never a premise.
+const META = /(question-gate|visible paragraph|a premise|the premise|the question tool|before asking|call the tool)/i
+// A drafted premise addresses the user.
+const ADDRESSES_USER = /\b(you|your|you're|you'd|you'll)\b/i
+
+export function premiseFromReasoning(reasoning: string, opts: Pick<Options, "premiseMaxChars" | "premiseMinChars">): string | undefined {
+  if (reasoning.trim().length === 0) return
+  const paragraphs = reasoning
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !META.test(p))
+  if (paragraphs.length === 0) return
+  // Prefer the trailing run of paragraphs that address the user: that is the draft the model meant
+  // to send. Fall back to the plain tail when nothing does.
+  const lastAddressed = paragraphs.reduce((acc, p, i) => (ADDRESSES_USER.test(p) ? i : acc), -1)
+  const end = lastAddressed >= 0 ? lastAddressed : paragraphs.length - 1
+  const kept: string[] = []
+  let total = 0
+  for (let i = end; i >= 0; i--) {
+    const p = paragraphs[i]
+    if (kept.length > 0 && total + p.length > opts.premiseMaxChars) break
+    kept.unshift(p)
+    total += p.length
+    if (total >= opts.premiseMinChars) break
+  }
+  const premise = kept.join("\n\n").slice(-opts.premiseMaxChars).trim()
+  return premise.length > 0 ? premise : undefined
+}
+
+export const TOOL_REQUIREMENT = [
+  "REQUIRED before calling this tool: the same assistant step must already contain visible reply text",
+  "(a short paragraph: what is being asked, why it is needed now, what each outcome leads to, plus any",
+  "commands as fenced code blocks). A thinking/reasoning block does NOT count — the user never reads it.",
+  "End the thinking, write that paragraph as normal output, then call this tool.",
+].join(" ")
 
 export function resolveOptions(raw: Readonly<Record<string, any>> = {}): Options {
   return {
     tools: new Set((raw.tools as string[] | undefined) ?? ["question"]),
     minChars: Number(raw.min_chars ?? 40),
-    maxRejections: Number(raw.max_rejections ?? 2),
-    rejectionWindowMs: Number(raw.rejection_window_ms ?? 5 * 60 * 1000),
+    maxRejectionsPerTurn: Number(raw.max_rejections_per_turn ?? 1),
+    turnWindowMs: Number(raw.turn_window_ms ?? 30 * 60 * 1000),
+    premiseMaxChars: Number(raw.premise_max_chars ?? 700),
+    premiseMinChars: Number(raw.premise_min_chars ?? 80),
+    injectPremise: raw.inject_premise !== false,
+    describeTool: raw.describe_tool !== false,
+    contextRetries: Number(raw.context_retries ?? 4),
+    contextRetryMs: Number(raw.context_retry_ms ?? 500),
     debug: raw.debug === true,
   }
 }
 
-// Visible text in the step up to (and excluding) the gated tool call, whitespace-trimmed.
-export function textBefore(message: AssistantMessage, callID: string): number {
+// Visible text in one step up to (and excluding) the gated tool call.
+export function textBefore(message: Message, callID: string): number {
   let chars = 0
-  for (const part of message.content) {
+  for (const part of message.content ?? []) {
     if (part.type === "tool" && part.id === callID) break
     if (part.type === "text") chars += (part.text ?? "").trim().length
   }
   return chars
 }
 
-// Visible text in the whole turn before the call: the current step's text plus every
-// assistant step since the last user message. The current step's text part is often not
-// yet persisted when execute.before fires (it streams in parallel), so counting only the
-// current message rejected calls whose description sat one step earlier in the same reply.
-export function textInTurn(messages: AssistantMessage[], messageID: string, callID: string): number {
+// Visible text in the whole turn before the call: this step's text plus every assistant step back to
+// the last user message. The current step's text part is often not yet persisted when execute.before
+// fires (it streams in parallel), so counting only the current step rejects calls whose premise sits
+// one step earlier in the same reply. Returns -1 when the message is not in the context at all.
+export function textInTurn(messages: Message[], messageID: string, callID: string): number {
   const idx = messages.findIndex((m) => m.id === messageID)
   if (idx < 0) return -1
   let chars = textBefore(messages[idx], callID)
@@ -60,53 +119,98 @@ export function textInTurn(messages: AssistantMessage[], messageID: string, call
   return chars
 }
 
+// The turn is identified by the user message that opened it, so "once per turn" resets on the next
+// prompt instead of leaking into later questions (a session-wide counter let a bare question through
+// hours later, and kept nudging inside one long turn).
+export function turnKeyOf(messages: Message[], messageID: string, sessionID: string): string {
+  const idx = messages.findIndex((m) => m.id === messageID)
+  for (let i = idx < 0 ? messages.length - 1 : idx; i >= 0; i--) {
+    if (messages[i].type === "user") return `${sessionID}:${messages[i].id}`
+  }
+  return `${sessionID}:head`
+}
+
+// Thinking models draft the user-facing paragraph at the end of the reasoning block, so its tail is
+// the premise they meant to send. Collect the turn's reasoning (the retry step often has none of its
+// own — the draft sits in the step that was nudged) and keep whole trailing paragraphs.
+export function reasoningInTurn(messages: Message[], messageID: string): string {
+  const idx = messages.findIndex((m) => m.id === messageID)
+  if (idx < 0) return ""
+  let start = 0
+  for (let i = idx; i >= 0; i--) {
+    if (messages[i].type === "user") {
+      start = i + 1
+      break
+    }
+  }
+  const chunks: string[] = []
+  for (let i = start; i <= idx; i++) {
+    const m = messages[i]
+    if (m.type !== "assistant") continue
+    for (const part of m.content ?? []) {
+      if (part.type !== "reasoning") continue
+      const t = (part.text ?? "").trim()
+      if (t.length > 0) chunks.push(t)
+    }
+  }
+  return chunks.join("\n\n")
+}
+
+
+// Prepend the premise to the first question's text. The hook event's `input` is frozen, so this
+// returns a NEW input object (mutating in place throws "Attempted to assign to readonly property"
+// and surfaces as a tool error — found live 2026-10-15). Returns undefined when the shape is not
+// usable or the premise is already there, in which case the call is left exactly as it was.
+export function withPremise(input: unknown, premise: string): unknown | undefined {
+  const questions = (input as QuestionInput | undefined)?.questions
+  if (!Array.isArray(questions) || questions.length === 0) return
+  const first = questions[0]
+  if (!first || typeof first !== "object") return
+  const existing = typeof first.question === "string" ? first.question : ""
+  if (existing.includes(INJECTED_MARKER)) return
+  const question = `${premise}\n\n${INJECTED_MARKER}\n\n${existing}`.trim()
+  return { ...(input as Record<string, unknown>), questions: [{ ...first, question }, ...questions.slice(1)] }
+}
+
 export function rejection(tool: string, minChars: number, chars: number, reasoningOnly: boolean): string {
   return [
     `[question-gate] \`${tool}\` not sent yet: this turn has ${chars} visible characters of reply text before the call (minimum ${minChars}).`,
     reasoningOnly
-      ? "This step contains only a thinking block and the tool call: the premise you wrote landed INSIDE the thinking block, which the user never sees."
+      ? "This step holds only a thinking block and the tool call, so the premise you wrote is inside the thinking block, which the user never sees."
       : "Reasoning/thinking blocks are not visible to the user.",
-    "End the thinking, then write the premise as a normal assistant text block —",
+    "End the thinking, write the premise as normal reply text —",
     "what is being asked and why, what each outcome leads to, any commands as fenced code blocks —",
-    "and only then call the tool again with the same arguments; it will be accepted.",
-    "Never mention this check or the rejection in your reply, and never replace the question with plain-text options.",
+    "then call the tool again with the same arguments; it will be accepted.",
+    "This is the only retry: the next call goes through either way.",
+    "Never mention this check in your reply, and never replace the question with plain-text options.",
   ].join(" ")
 }
 
-export function partTypes(message: AssistantMessage | undefined): string {
+export function partTypes(message: Message | undefined): string {
   return (message?.content ?? []).map((p) => p.type).join(",") || "-"
 }
 
-// Rejections per session inside the window; bounded, lazily swept.
-const MAX_TRACKED_SESSIONS = 500
+// Bounded, lazily swept: one entry per gated turn.
+const MAX_TRACKED_TURNS = 500
 
-export function shouldLetThrough(
-  rejections: Map<string, { count: number; at: number }>,
-  sessionID: string,
-  now: number,
-  opts: Pick<Options, "maxRejections" | "rejectionWindowMs">,
-): boolean {
-  const entry = rejections.get(sessionID)
-  if (!entry || now - entry.at > opts.rejectionWindowMs) return false
-  return entry.count >= opts.maxRejections
+export type TurnState = { rejected: number; at: number }
+
+export function recordRejection(turns: Map<string, TurnState>, key: string, now: number, windowMs: number): number {
+  for (const [k, v] of turns) if (now - v.at > windowMs) turns.delete(k)
+  if (turns.size >= MAX_TRACKED_TURNS && !turns.has(key)) {
+    const oldest = [...turns.entries()].sort((a, b) => a[1].at - b[1].at)[0]
+    if (oldest) turns.delete(oldest[0])
+  }
+  const entry = turns.get(key)
+  const next = { rejected: (entry?.rejected ?? 0) + 1, at: now }
+  turns.set(key, next)
+  return next.rejected
 }
 
-export function recordRejection(
-  rejections: Map<string, { count: number; at: number }>,
-  sessionID: string,
-  now: number,
-  windowMs: number,
-): void {
-  for (const [key, value] of rejections) {
-    if (now - value.at > windowMs) rejections.delete(key)
-  }
-  if (rejections.size >= MAX_TRACKED_SESSIONS && !rejections.has(sessionID)) {
-    const oldest = [...rejections.entries()].sort((a, b) => a[1].at - b[1].at)[0]
-    if (oldest) rejections.delete(oldest[0])
-  }
-  const entry = rejections.get(sessionID)
-  if (!entry || now - entry.at > windowMs) rejections.set(sessionID, { count: 1, at: now })
-  else rejections.set(sessionID, { count: entry.count + 1, at: now })
+export function rejectionsSoFar(turns: Map<string, TurnState>, key: string, now: number, windowMs: number): number {
+  const entry = turns.get(key)
+  if (!entry || now - entry.at > windowMs) return 0
+  return entry.rejected
 }
 
 const plugin: Plugin.Plugin = {
@@ -115,49 +219,98 @@ const plugin: Plugin.Plugin = {
     const opts = resolveOptions(ctx.options)
     const log = (msg: string) => console.error(`[question-gate] ${msg}`)
     const debug = (msg: string) => opts.debug && log(msg)
-    const rejections = new Map<string, { count: number; at: number }>()
+    const turns = new Map<string, TurnState>()
+
+    // Layer 1: prevention. State the requirement where the model decides to call the tool.
+    if (opts.describeTool) {
+      try {
+        await ctx.tool.transform((editor) => {
+          for (const id of opts.tools) {
+            const tool = editor.get(id)
+            if (!tool) continue
+            if (typeof tool.description === "string" && tool.description.includes("REQUIRED before calling this tool")) continue
+            editor.update(id, (t) => {
+              t.description = `${t.description ?? ""}\n\n${TOOL_REQUIREMENT}`.trim()
+            })
+          }
+        })
+      } catch (error) {
+        log(`could not extend the tool description: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
 
     await ctx.tool.hook("execute.before", async (event) => {
       if (!opts.tools.has(event.tool)) return
-      const now = Date.now()
-      if (shouldLetThrough(rejections, event.sessionID, now, opts)) {
-        rejections.delete(event.sessionID)
-        log(`letting ${event.tool} through in ${event.sessionID} after ${opts.maxRejections} rejections (nudge, not wall)`)
+      // Anything unexpected in here must let the call through: a question that never reaches the
+      // user is worse than one without a premise. Only the deliberate nudge below throws.
+      let nudge: string | undefined
+      try {
+        nudge = await decide(event)
+      } catch (error) {
+        log(`internal failure, letting ${event.tool} through: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`)
         return
       }
-      // The current step's text part streams in parallel and is often not yet persisted
-      // when this hook fires, so a first-step question would always count 0. Retry a few
-      // times before rejecting.
+      if (nudge) throw new Error(nudge)
+    })
+
+    async function decide(event: {
+      tool: string
+      sessionID: string
+      messageID: string
+      id: string
+      input: unknown
+    }): Promise<string | undefined> {
+      const now = Date.now()
       let chars = -1
-      let current: AssistantMessage | undefined
-      for (let attempt = 0; attempt < 5; attempt++) {
-        if (attempt > 0) await new Promise((r) => setTimeout(r, 500))
-        let messages: AssistantMessage[]
+      let current: Message | undefined
+      let turnMessages: Message[] = []
+      let key = `${event.sessionID}:head`
+      // The step's text part streams in parallel with the tool call, so a first-step question can
+      // read as 0 chars for a moment. Re-read before judging.
+      for (let attempt = 0; attempt <= opts.contextRetries; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, opts.contextRetryMs))
         try {
-          messages = (await ctx.session.context({ sessionID: event.sessionID })) as unknown as AssistantMessage[]
+          turnMessages = (await ctx.session.context({ sessionID: event.sessionID })) as unknown as Message[]
         } catch (error) {
           log(`context lookup failed for ${event.sessionID}, letting ${event.tool} through: ${error instanceof Error ? error.message : String(error)}`)
           return
         }
-        current = messages.find((m) => m.id === event.messageID)
-        chars = textInTurn(messages, event.messageID, event.id)
+        current = turnMessages.find((m) => m.id === event.messageID)
+        key = turnKeyOf(turnMessages, event.messageID, event.sessionID)
+        chars = textInTurn(turnMessages, event.messageID, event.id)
         if (chars < 0) {
           debug(`message ${event.messageID} not found in session context, letting ${event.tool} through`)
           return
         }
         if (chars >= opts.minChars) break
       }
-      debug(`${event.tool} in ${event.messageID}: ${chars} chars of text in the turn before the call`)
+
       if (chars >= opts.minChars) {
-        rejections.delete(event.sessionID)
+        debug(`${event.tool} in ${event.messageID}: ${chars} chars of visible text in the turn, passing`)
+        turns.delete(key)
         return
       }
-      recordRejection(rejections, event.sessionID, now, opts.rejectionWindowMs)
+
       const types = partTypes(current)
-      log(`rejected ${event.tool} in ${event.sessionID}/${event.messageID}: ${chars} chars < ${opts.minChars} (step parts: ${types})`)
-      const reasoningOnly = types.includes("reasoning") && !types.includes("text")
-      throw new Error(rejection(event.tool, opts.minChars, chars, reasoningOnly))
-    })
+      const already = rejectionsSoFar(turns, key, now, opts.turnWindowMs)
+
+      // Layer 2: nudge, at most `maxRejectionsPerTurn` times for this turn.
+      if (already < opts.maxRejectionsPerTurn) {
+        const n = recordRejection(turns, key, now, opts.turnWindowMs)
+        log(`nudged ${event.tool} in ${event.sessionID}/${event.messageID}: ${chars} chars < ${opts.minChars} (step parts: ${types}, nudge ${n}/${opts.maxRejectionsPerTurn})`)
+        return rejection(event.tool, opts.minChars, chars, types.includes("reasoning") && !types.includes("text"))
+      }
+
+      // Layer 3: guarantee. Never block twice — let it through, but carry a premise into the form.
+      const premise = opts.injectPremise ? premiseFromReasoning(reasoningInTurn(turnMessages, event.messageID), opts) : undefined
+      const replacement = premise ? withPremise(event.input, premise) : undefined
+      if (replacement) {
+        event.input = replacement
+        log(`let ${event.tool} through in ${event.sessionID}/${event.messageID} after ${already} nudge(s) and injected a ${premise!.length}-char premise from the reasoning (step parts: ${types})`)
+        return
+      }
+      log(`let ${event.tool} through in ${event.sessionID}/${event.messageID} after ${already} nudge(s) with no premise injected (step parts: ${types}, ${chars} chars, premise ${premise ? "unusable input shape" : "unavailable"})`)
+    }
   },
 }
 
