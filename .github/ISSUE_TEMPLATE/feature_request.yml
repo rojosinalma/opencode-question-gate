@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a change or an addition
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What does the gate let through, block or garble that it should not?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should it behave? A new option, a change to one of the three layers, a different log line…
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Tool description (layer 1)
+        - Nudge / rejection text (layer 2)
+        - Premise recovery and injection (layer 3)
+        - Visible-text counting / turn detection
+        - Options and defaults
+        - Logging
+        - Other
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: The change keeps the guarantee that a question is never blocked terminally.
+        - label: I searched existing issues.

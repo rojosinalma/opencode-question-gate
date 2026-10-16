@@ -1,0 +1,42 @@
+name: Bug report
+description: The gate does something other than what the docs say
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report. Strip anything private from transcripts and logs before pasting.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: The tag you checked out, or `git log -1 --format=%h` in the plugin directory.
+      placeholder: v0.1.1
+    validations:
+      required: true
+  - type: input
+    id: opencode
+    attributes:
+      label: OpenCode and Bun versions
+      placeholder: opencode 2.0.30, bun 1.4.2
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What the model did, what you expected the gate to do, what it did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Plugin options
+      description: The `options` object of the `plugins[]` entry in `opencode.jsonc`, or "defaults".
+      render: jsonc
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "The `[question-gate]` lines from the server log (set `debug: true` for the full decision trail)."
+      render: text

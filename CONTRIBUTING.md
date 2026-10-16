@@ -19,9 +19,11 @@ and watch the `[question-gate]` lines.
 The pure helpers are covered by `test/question-gate.test.ts` and run without an OpenCode server:
 
 ```sh
-bun install
+bun install --frozen-lockfile
 bun test
 ```
+
+`bun.lock` is tracked; commit it whenever `package.json` changes.
 
 `bun install` only fetches `@opencode/plugin` for its types. The same suite runs in CI
 (`.github/workflows/run-tests.yml`) on every push and pull request. Add a test for every change in
@@ -43,18 +45,23 @@ how text is counted, how the turn key is derived or how the premise is recovered
 ## Commits and PRs
 
 Plain, descriptive commit messages in the imperative ("Cap the premise at premise_max_chars"). One
-logical change per commit. PRs describe the behaviour change and include the test that proves it;
-`bun test` must pass.
+logical change per commit. **Every commit is GPG-signed** (`git config commit.gpgsign true`);
+unsigned commits are not merged. PRs describe the behaviour change and include the test that proves
+it; `bun test` must pass and `main` is protected by the `run-tests` check.
 
 ## Documentation
 
-- `README.md` — what it is, requirements, setup, licence. Nothing else goes there.
+- `README.md` — what it is, requirements, installation, usage, development, licence. Nothing else goes there.
 - `docs/configuration.md` — every option, its default and tuning notes.
 - `docs/SDD.md` — design: hooks, data flow, state, decisions.
 - `docs/troubleshooting.md` — symptoms, causes, log lines.
 - `CHANGELOG.md` — Keep a Changelog format, one entry per release.
+- `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` — this file, how to report a vulnerability,
+  the Contributor Covenant.
+- `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` — issue and PR forms.
 
 ## Releasing
 
-Bump `version` in `package.json`, add the CHANGELOG entry, commit, tag `vX.Y.Z` and push the tag.
-Installation is `git clone`, so a release is the tag itself.
+Bump `version` in `package.json`, move the *Unreleased* CHANGELOG entries under the new version,
+commit, create a signed tag (`git tag -s vX.Y.Z -m vX.Y.Z`), push it and publish a GitHub release
+whose notes are that CHANGELOG section. Installation is `git clone`, so the tag is the artifact.
