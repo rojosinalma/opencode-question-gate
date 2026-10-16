@@ -1,4 +1,4 @@
-// Type-only import: Bun resolves bare specifiers from the symlink's real path, where no node_modules exists.
+// Type-only import: the plugin directory may have no node_modules of its own at runtime.
 import type { Plugin } from "@opencode/plugin"
 
 // Guarantees that a `question` tool call carries a visible premise, in three layers:
@@ -14,9 +14,8 @@ import type { Plugin } from "@opencode/plugin"
 //                    agent never loops on an error.
 //
 // Reasoning (thinking) blocks never count as visible text: the user sees a bare question when the
-// premise lives there. Origin: 2026-10-12, questions arriving before their explanation; hardened
-// 2026-10-15 after a session took 6 rejections, one turn died on a provider content filter right
-// after a rejection, and two questions were dismissed after being asked twice.
+// premise lives there. The once-per-turn cap exists because repeated rejections make some models
+// loop on the bare call, and a provider error right after a rejection can end the turn.
 
 export type Options = {
   tools: Set<string>
@@ -159,7 +158,7 @@ export function reasoningInTurn(messages: Message[], messageID: string): string 
 
 // Prepend the premise to the first question's text. The hook event's `input` is frozen, so this
 // returns a NEW input object (mutating in place throws "Attempted to assign to readonly property"
-// and surfaces as a tool error — found live 2026-10-15). Returns undefined when the shape is not
+// and surfaces as a tool error). Returns undefined when the shape is not
 // usable or the premise is already there, in which case the call is left exactly as it was.
 export function withPremise(input: unknown, premise: string): unknown | undefined {
   const questions = (input as QuestionInput | undefined)?.questions
