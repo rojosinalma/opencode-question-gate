@@ -4,16 +4,17 @@
 [![release](https://img.shields.io/github/v/release/rojosinalma/opencode-question-gate)](https://github.com/rojosinalma/opencode-question-gate/releases)
 [![license](https://img.shields.io/github/license/rojosinalma/opencode-question-gate)](LICENSE)
 
-An [OpenCode](https://opencode.ai) plugin that guarantees the `question` tool is never shown to the
-user without a visible premise. Thinking models tend to draft the explanation inside a reasoning
-block — which the user never reads — and then pop a bare question. The gate works in three layers,
-never loops, and never blocks a question terminally:
+An [OpenCode](https://opencode.ai) plugin that keeps the `question` tool from turning into a nag.
+It enforces five rules on every `question` call, and never loops an agent on a rejection:
 
-1. **prevention** — the requirement is appended to the `question` tool's own description, so the model reads it while deciding to call.
-2. **nudge** — a call with under `min_chars` of visible reply text in the turn is rejected at most once per turn, so the model writes the paragraph and retries.
-3. **guarantee** — if it still arrives bare, the call goes through with a premise recovered from the reasoning tail injected into the form.
+1. **question back** — when the user answers with a question of their own, nothing else is asked that turn.
+2. **dismissals** — a dismissed question is never asked again in the session, and nothing else is asked in the turn it was dismissed in.
+3. **one per turn** — at most `max_calls_per_turn` (default 1) question calls per turn.
+4. **parallelism** — questions about parallel work or subagents are rejected; the answer is always "parallelize".
+5. **premise** — never a rejection: a call with no visible paragraph in front of it goes through with a premise recovered from the model's reasoning.
 
-Configuration, design and troubleshooting are documented in `docs/`.
+The same rules are appended to the `question` tool's description, so the model reads them before it
+calls. Configuration, design and troubleshooting are documented in `docs/`.
 
 ## Requirements
 
@@ -36,7 +37,7 @@ Reference the same path from `opencode.jsonc` only to change options (see `docs/
 ```jsonc
 {
   "plugins": [
-    { "package": "./plugins/question-gate", "options": { "min_chars": 40, "max_rejections_per_turn": 1 } }
+    { "package": "./plugins/question-gate", "options": { "max_calls_per_turn": 1 } }
   ]
 }
 ```
@@ -45,12 +46,11 @@ Plugins are loaded when a location boots; restart the OpenCode server for an alr
 
 ## Usage
 
-Nothing to operate: once loaded, every `question` call made by a model without a visible paragraph
-before it is nudged once, and a call that still arrives bare goes through with the premise recovered
-from the model's reasoning shown in the form. Decisions are logged as `[question-gate] nudged|let …
-through` on the server's stderr; set `"debug": true` in the options to see every evaluation. The one
-option worth tuning is `min_chars` — the number of visible reply characters that counts as a premise
-(default `40`); `max_rejections_per_turn: 0` turns the nudge layer off and keeps layers 1 and 3.
+Nothing to operate. A rejected call returns a tool error that starts with `[question-gate]` and
+tells the model what to do instead (answer in plain text, continue without asking, or ask next
+turn). Every decision is logged as one `[question-gate] …` line on the server's stderr; set
+`"debug": true` to see the calls that pass as well. The option most worth tuning is
+`max_calls_per_turn` (default `1`, `0` removes the limit).
 
 ## Development
 
@@ -59,7 +59,7 @@ bun install --frozen-lockfile
 bun test
 ```
 
-The tests cover the pure helpers and need no OpenCode server. See [CONTRIBUTING.md](CONTRIBUTING.md)
+The tests cover the pure helpers and the hook flow against a fake plugin context; they need no OpenCode server. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for layout, style and the release procedure.
 
 ## License

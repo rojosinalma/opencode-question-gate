@@ -16,7 +16,8 @@ and watch the `[question-gate]` lines.
 
 ## Tests
 
-The pure helpers are covered by `test/question-gate.test.ts` and run without an OpenCode server:
+The pure helpers and the hook flow (with a fake plugin context) are covered by
+`test/question-gate.test.ts` and run without an OpenCode server:
 
 ```sh
 bun install --frozen-lockfile
@@ -27,20 +28,20 @@ bun test
 
 `bun install` only fetches `@opencode/plugin` for its types. The same suite runs in CI
 (`.github/workflows/run-tests.yml`) on every push and pull request. Add a test for every change in
-how text is counted, how the turn key is derived or how the premise is recovered.
+what is rejected, how a turn is keyed, how answers and dismissals are read or how the premise is recovered.
 
 ## Code style and layout
 
-- `index.ts` — the whole plugin: option resolution, pure helpers (exported for the tests) and the
-  `setup()` that registers the two hooks.
+- `index.ts` — the whole plugin: option resolution, pure helpers (exported for the tests) and `setupGate()`
+  that registers the transform and the two tool hooks.
 - `test/question-gate.test.ts` — the `bun:test` suite.
 - `docs/` — configuration, design and troubleshooting.
 - No semicolons, double quotes, 2-space indent, `camelCase` for resolved options and `snake_case`
   for the keys read from `opencode.jsonc`.
 - Keep `@opencode/plugin` an `import type`: the plugin directory may have no `node_modules` of its
   own at runtime.
-- Anything inside the `execute.before` hook that is not the deliberate nudge must fail open: catch,
-  log, let the call through.
+- Anything inside the hooks that is not a deliberate rejection must fail open: catch, log, let the
+  call through.
 
 ## Commits and PRs
 

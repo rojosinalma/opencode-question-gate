@@ -1,7 +1,7 @@
 {
   "name": "opencode-question-gate",
-  "version": "0.1.1",
-  "description": "OpenCode plugin: guarantees the question tool is always preceded by a visible premise",
+  "version": "0.2.0",
+  "description": "OpenCode plugin: stops repeated, re-asked and unneeded question tool calls",
   "author": "rojosinalma",
   "license": "AGPL-3.0-only",
   "type": "module",
