@@ -43,7 +43,7 @@ it is only auto-discovered from the plugins directory.
 | `tools` | `["question"]` | tool names the gate applies to |
 | `max_calls_per_turn` | `1` | question calls allowed per turn, open ones included; `0` removes the limit |
 | `stop_on_question_back` | `true` | reject every question after the user answered with a question |
-| `remember_dismissed` | `true` | reject a question that repeats a dismissed one in the same session |
+| `remember_dismissed` | `true` | reject a question that repeats a dismissed one in the same session, unless the prompt that opened the turn names its header or question |
 | `stop_after_dismissal` | `true` | reject every question after a dismissal in the same turn |
 | `match_header` | `true` | a repeated header alone counts as a repeat (otherwise only the question text) |
 | `dismissed_pattern` | `"dismissed"` | case-insensitive regex the tool error must match to count as a dismissal |

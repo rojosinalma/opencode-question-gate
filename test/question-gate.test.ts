@@ -7,11 +7,13 @@ import {
   RULES_MARKER,
   answeredWithQuestion,
   isDismissal,
+  latestUserText,
   matchesDismissed,
   mentionsParallelism,
   normalise,
   premiseFromReasoning,
   questionKeys,
+  raisedByUser,
   reasoningInTurn,
   recordDismissed,
   resolveOptions,
@@ -304,6 +306,25 @@ test("a dismissed question is never asked again in the session, and nothing else
   expect((await f.before(ask("Colour", "Which colour?"), "a2")).ok).toBe(true)
   // other sessions are not affected
   expect((await f.before(ask("Bin size", "Which bin size do I print?"), "a2", "s2")).ok).toBe(true)
+})
+
+test("a dismissed question goes through again when the user brings it up", async () => {
+  const f = fakeCtx({ max_calls_per_turn: 0 }, turnOf())
+  await f.setup()
+  const first = await f.before(ask("Bin size", "Which bin size do I print?"))
+  await f.after(first.event, { error: dismissedError })
+  f.ctx.state.messages = [...turnOf(), { id: "u2", type: "user", text: "Ok, ask me the bin size again.", content: [] }, assistant("a2", [text(para(60))])]
+  expect((await f.before(ask("Bin size", "Which bin size do I print?"), "a2")).ok).toBe(true)
+  f.ctx.state.messages = [...turnOf(), { id: "u3", type: "user", text: "Carry on.", content: [] }, assistant("a3", [text(para(60))])]
+  expect((await f.before(ask("Bin size", "Which bin size do I print?"), "a3")).ok).toBe(true)
+})
+
+test("raisedByUser needs the header or question in the user's words", () => {
+  const d = { headers: ["bin size"], questions: ["which bin size do i print"] }
+  expect(raisedByUser("ask the Bin-Size question again", ask("Bin size", "Which bin size do I print?"), d)).toEqual({ headers: [], questions: [] })
+  expect(raisedByUser("carry on", ask("Bin size", "Which bin size do I print?"), d)).toBeUndefined()
+  expect(raisedByUser("binsizer", ask("Bin size", "x?"), d)).toBeUndefined()
+  expect(latestUserText([user("u1"), { id: "u2", type: "user", text: "hello", content: [] }, assistant("a2", [])], "a2")).toBe("hello")
 })
 
 test("the gate's own rejection is not recorded as a dismissal", async () => {

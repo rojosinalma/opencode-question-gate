@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 ## [0.2.0] - 2026-10-22
 
 ### Added
+- A dismissed question is let through again when the user's prompt names its header or question text.
 - Question back: after a free-text answer that contains `?`, every further question in the turn is rejected.
 - Dismissal memory: a dismissed question (same header or question text, normalised) is rejected for
   the rest of the session, and no other question is sent in the turn it was dismissed in.

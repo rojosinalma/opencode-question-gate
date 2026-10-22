@@ -45,7 +45,7 @@ export type Options = {
 }
 
 type Content = { type: string; text?: string; id?: string }
-type Message = { id: string; type: string; content?: Content[] }
+type Message = { id: string; type: string; text?: string; content?: Content[] }
 type QuestionItem = { header?: string; question?: string; options?: { label?: string }[] }
 type QuestionInput = { questions?: QuestionItem[] }
 
@@ -234,6 +234,33 @@ export function recordDismissed(previous: Dismissed | undefined, input: unknown,
   return {
     headers: merge(previous?.headers ?? [], keys.headers),
     questions: merge(previous?.questions ?? [], keys.questions),
+  }
+}
+
+// Text of the user message that opened the turn (user messages carry `text`, not content parts).
+export function latestUserText(messages: Message[], messageID: string): string {
+  const idx = messages.findIndex((m) => m.id === messageID)
+  for (let i = idx < 0 ? messages.length - 1 : idx; i >= 0; i--) {
+    const m = messages[i]
+    if (m.type !== "user") continue
+    const parts = (m.content ?? []).filter((p) => p.type === "text").map((p) => p.text ?? "")
+    return [m.text ?? "", ...parts].join(" ")
+  }
+  return ""
+}
+
+// The user brings a dismissed question back up when the turn's prompt names its header or contains
+// its question text. Returns the dismissal list without the keys of this call, or undefined when
+// the user did not raise it.
+export function raisedByUser(userText: string, input: unknown, dismissed: Dismissed | undefined): Dismissed | undefined {
+  if (!dismissed) return
+  const said = ` ${normalise(userText)} `
+  const keys = questionKeys(input)
+  const hit = [...keys.headers, ...keys.questions].some((k) => said.includes(` ${k} `))
+  if (!hit) return
+  return {
+    headers: dismissed.headers.filter((h) => !keys.headers.includes(h)),
+    questions: dismissed.questions.filter((q) => !keys.questions.includes(q)),
   }
 }
 
@@ -456,12 +483,18 @@ export async function setupGate(ctx: GateContext, now: () => number = Date.now, 
       log(`rejected ${event.tool} in ${where}: asks about parallelism`)
       return MESSAGES.parallelism
     }
-    if (opts.rememberDismissed && matchesDismissed(event.input, dismissed.get(event.sessionID, at), opts.matchHeader)) {
-      log(`rejected ${event.tool} in ${where}: repeats a dismissed question`)
-      return MESSAGES.dismissedRepeat
+    let messages = await readContext(event.sessionID)
+    const past = dismissed.get(event.sessionID, at)
+    if (opts.rememberDismissed && matchesDismissed(event.input, past, opts.matchHeader)) {
+      const cleared = messages ? raisedByUser(latestUserText(messages, event.messageID), event.input, past) : undefined
+      if (!cleared) {
+        log(`rejected ${event.tool} in ${where}: repeats a dismissed question`)
+        return MESSAGES.dismissedRepeat
+      }
+      dismissed.set(event.sessionID, cleared, at)
+      log(`let a dismissed question through in ${where}: the user brought it up`)
     }
 
-    let messages = await readContext(event.sessionID)
     const key = messages ? turnKeyOf(messages, event.messageID, event.sessionID) : undefined
     if (!key) {
       debug(`no turn for ${where}, per-turn rules skipped`)

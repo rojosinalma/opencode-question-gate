@@ -8,7 +8,7 @@ An [OpenCode](https://opencode.ai) plugin that keeps the `question` tool from tu
 It enforces five rules on every `question` call, and never loops an agent on a rejection:
 
 1. **question back** — when the user answers with a question of their own, nothing else is asked that turn.
-2. **dismissals** — a dismissed question is never asked again in the session, and nothing else is asked in the turn it was dismissed in.
+2. **dismissals** — a dismissed question is never asked again in the session unless the user brings it up (their next message names its header or question), and nothing else is asked in the turn it was dismissed in.
 3. **one per turn** — at most `max_calls_per_turn` (default 1) question calls per turn.
 4. **parallelism** — questions about parallel work or subagents are rejected; the answer is always "parallelize".
 5. **premise** — never a rejection: a call with no visible paragraph in front of it goes through with a premise recovered from the model's reasoning.
