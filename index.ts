@@ -10,8 +10,8 @@ import type { Plugin } from "@opencode/plugin"
 //                       the turn it was dismissed in.
 //   3. one per turn   — at most `max_calls_per_turn` question calls per turn, so the user can answer
 //                       (or reject) one before the next, dependent one appears.
-//   4. parallelism    — a question about parallel work or subagents is rejected: the answer is
-//                       always "parallelize", so it is never worth asking.
+//   4. parallelism    — a question about parallel work or subagents is rejected: the agent
+//                       decides that itself, so it is never worth asking.
 //   5. premise        — never a rejection. A call with too little visible reply text in front of it
 //                       goes through with a premise recovered from the reasoning tail.
 //
@@ -59,7 +59,7 @@ export const TOOL_RULES = [
   "(2) Write a short visible paragraph first: what you ask, why now, what each answer leads to. A thinking block does not count.",
   "(3) If the user's answer is a question, answer it in plain reply text and end the turn.",
   "(4) Never ask again a question the user dismissed.",
-  "(5) Never ask about parallelism or subagents; parallelize by default.",
+  "(5) Never ask about parallelism or subagents; decide it yourself.",
 ].join(" ")
 
 export const MESSAGES = {
@@ -70,7 +70,7 @@ export const MESSAGES = {
     "The user dismissed a question this turn. Do not ask anything else this turn. Continue without that answer or end the turn with a plain reply.",
   limit: (max: number) =>
     `This turn already has ${max} question call${max === 1 ? "" : "s"}, the maximum. State any further decision in plain reply text and end the turn; ask it next turn if it is still open.`,
-  parallelism: "The user's rule: never ask about parallelism; parallelize by default. Do the work in parallel without asking.",
+  parallelism: "The user's rule: never ask about parallelism or subagents. Decide it yourself and do the work without asking.",
 }
 
 export function rejectionText(message: string): string {

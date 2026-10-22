@@ -344,7 +344,7 @@ test("questions about parallelism are rejected", async () => {
   await f.setup()
   const r = await f.before(ask("Parallelism", "Should I build it in parallel subagents or sequentially?", ["Parallel (Recommended)", "Sequential"]))
   expect(r.ok).toBe(false)
-  expect(r.message).toContain("The user's rule: never ask about parallelism; parallelize by default.")
+  expect(r.message).toContain("The user's rule: never ask about parallelism or subagents. Decide it yourself")
   // it does not use up the turn's call
   expect((await f.before(ask("Cache", "Keep the cache?"))).ok).toBe(true)
   const off = fakeCtx({ block_parallelism: false }, turnOf())

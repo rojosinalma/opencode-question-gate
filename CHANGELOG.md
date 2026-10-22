@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- The parallelism rejection and the tool rule tell the agent to decide on parallel work itself,
+  instead of always telling it to parallelize.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
