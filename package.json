@@ -23,6 +23,6 @@
     "url": "https://github.com/rojosinalma/opencode-question-gate"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.30"
+    "@opencode/plugin": "2.1.4"
   }
 }
